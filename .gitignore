@@ -3,4 +3,11 @@ imagenette2-160.tgz
 __pycache__/
 *.pyc
 *.pth
-results/results.json
+.DS_Store
+results/results_smoke.json
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/main.pdf

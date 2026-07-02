@@ -43,28 +43,35 @@ independent ways: \emph{geometrically}, by estimating the intrinsic dimension
 (ID) of the activation manifold at each layer, and \emph{functionally}, by
 identifying which directions in activation space most influence the output
 (active subspaces).  We ask whether these two characterizations agree---that
-is, whether the directions that span the data manifold at a given layer are
-the same directions along which the network's loss varies most.
+is, whether the directions that dominate the data variance at a given layer
+are the same directions along which the network's loss varies most.
 
 We measure alignment via principal angles between (i) the top-$k$ PCA
-directions of the activation cloud, where $k$ equals the TwoNN intrinsic
+directions of the activation cloud, where $k$ is set by the TwoNN intrinsic
 dimension, and (ii) the top-$k$ eigenvectors of the Average Gradient Outer
-Product (AGOP) at the same layer.  On VGG-16 and ResNet-18 trained on
-Imagenette, trained hidden layers show alignment $35$--$45\times$ above a
-random-subspace baseline, while the final linear classifier layer collapses to
-$\approx 2\times$ above baseline.  Randomly-initialised controls sit at
-chance level ($\approx 1\times$) throughout, confirming the structure is
-training-induced rather than architectural.
+Product (AGOP) at the same layer.  On ImageNet-pretrained VGG-16 and
+ResNet-18 probed on Imagenette, alignment exceeds the $k/d$ random-subspace
+baseline at every layer beyond the first, peaking at the last hidden layers:
+$35$--$43\times$ baseline for the VGG-16 FC hidden layers and $7.6\times$
+for ResNet-18's final block, before collapsing to ${\approx}2\times$ at the
+logits.  Random-init controls sit at $0.8$--$1.3\times$ baseline on the same
+measure.  Two controls probe what the alignment is made of: it survives
+split-half estimation (PCA and AGOP from disjoint image sets), so it is
+population structure rather than per-sample coupling, and it survives
+removal of class-mean structure from both objects at $21$--$25\times$
+baseline for the VGG FC hidden layers, so it is not reducible to shared
+class geometry.  The controls also surface a caveat we quantify: within one
+linear map of the logits, gradient residuals are architecturally coupled to
+activation residuals (random-init networks show strong within-class
+alignment there), so attribution to training is only clean at layers at
+least two nonlinearities from the output.
 
-We connect these findings to Neural Collapse (the data-manifold and
-classifier-weight-row-space align at convergence under unconstrained features),
-to the AGOP-driven-collapse result of \citet{beaglehole2024agop}, and to the
-recently-proposed ``escape dimensions'' account of why overparameterisation
-helps optimisation.  Together, the results suggest that generalisation in deep
-networks is not solely about compressing representations into low-dimensional
-manifolds (as the ID story implies), but about compressing them into
-low-dimensional manifolds that are \emph{aligned with the task gradient
-structure}.
+Together, the results suggest that the ID story of representation learning
+is incomplete: trained networks do not merely compress representations into
+low-dimensional manifolds---they compress them into manifolds whose dominant
+directions are \emph{aligned with the task gradient structure}, and this
+alignment lives largely in the within-class geometry that neural-collapse
+analyses discard.
 \end{abstract}
 
 % ============================================================
@@ -116,16 +123,26 @@ baseline to obtain a dimensionless ratio.
 Our main contributions are:
 \begin{enumerate}
 \item A simple, tractable measure of \emph{manifold-gradient alignment} at
-  each layer of a pretrained CNN, requiring only one forward-backward pass per
-  batch and standard linear algebra.
+  each layer of a pretrained CNN---one forward-backward pass per batch plus
+  standard linear algebra---together with a suite of controls (split-half,
+  within-class, crossed, centred-AGOP, $k$-sweep) that separate population
+  alignment from sample coupling and class structure.
 
-\item The empirical finding that trained FC hidden layers exhibit $35$--$45\times$
-  above-chance alignment, while the final linear layer drops to $\approx2\times$,
-  and random-init controls stay at $\approx1\times$.
+\item The empirical finding that trained networks align data-variance and
+  gradient subspaces above chance at every layer beyond the first
+  ($35$--$43\times$ baseline at VGG-16's FC hidden layers, up to
+  $7.6\times$ at ResNet-18's final block), that the logits layer collapses
+  to ${\approx}2\times$, that random-init controls sit at
+  $0.8$--$1.3\times$, and---centrally---that the alignment survives removal
+  of class-mean structure: most of it lives in within-class geometry.
 
-\item An analysis connecting the alignment collapse at the output layer to
-  Neural Collapse, and connecting the overall alignment pattern to the
-  ``escape dimensions'' account of overparameterisation.
+\item The identification and mechanism of an architectural confound: within
+  one linear map of the logits, gradient residuals are a fixed
+  near-isotropic linear image of activation residuals (exact at uniform
+  softmax), producing strong within-class ``alignment'' even at random
+  init---and, through ResNet's residual stream, propagating deep into the
+  network.  Any study of gradient-representation alignment near the output
+  must control for this.
 \end{enumerate}
 
 % ============================================================
@@ -141,15 +158,23 @@ is the minimal $k \le d$ such that the data approximately lies on a
 $k$-dimensional manifold.  \citet{facco2017estimating} propose the TwoNN
 estimator, which exploits the ratio $\mu_i = r_i^{(2)}/r_i^{(1)}$ of each
 point's second- to first-nearest-neighbour distance.  Under the assumption
-that the data density is locally constant on the scale of $r_i^{(1)}$, $\mu_i$
-follows a Pareto distribution with shape parameter $d+1$, giving the MLE:
+that the data density is locally constant on the scale of $r_i^{(2)}$, $\mu$
+follows a Pareto distribution with shape parameter $d$ (density
+$d\,\mu^{-(d+1)}$ on $[1,\infty)$), whose CDF is $F(\mu) = 1 - \mu^{-d}$.
+Following the original procedure, we estimate $d$ by fitting
 \begin{equation}
-\hat{d} = \frac{N-1}{\sum_{i=1}^N \log \mu_i}.
+-\log\bigl(1 - F_{\mathrm{emp}}(\mu)\bigr) = \hat{d}\,\log \mu
 \label{eq:twonn}
 \end{equation}
-TwoNN is asymptotically unbiased and handles curved, non-uniformly sampled
-manifolds, properties that disqualify PCA-based linear estimates
-\citep{ansuini2019intrinsic}.
+with a straight line through the origin on the empirical CDF, after
+discarding the 10\% largest ratios as prescribed by
+\citet{facco2017estimating}.  We cross-check with the closed-form
+bias-corrected estimator $\hat d = (N{-}1)/\sum_i \log\mu_i$; the two agree
+within error bars at every layer.  TwoNN handles curved, non-uniformly
+sampled manifolds, properties that disqualify PCA-based linear ID estimates
+\citep{ansuini2019intrinsic}.  A known caveat is finite-sample
+underestimation when $\hat d \gtrsim 20$ at moderate $N$; we quantify this on
+synthetic data and account for it in Section~\ref{sec:results}.
 
 \subsection{Active Subspaces and the AGOP}
 \label{sec:agop}
@@ -163,13 +188,15 @@ For a differentiable function $f:\R^d\to\R$, the \emph{active subspace}
 Eigenvectors of $\AGOP$ with large eigenvalues span directions along which $f$
 varies most on average; the remaining directions are approximately inactive.
 
-\citet{cui2020active} extend this to intermediate layers: given a network
-$h = g \circ p$ split at layer $\ell$, they define $\AGOP_\ell =
-\E_x[\nabla_{a_\ell}\mathcal{L}\,(\nabla_{a_\ell}\mathcal{L})^\top]$ where
+\citet{cui2020active} apply active-subspace analysis to neural networks and
+show that the number of \emph{active neurons} at intermediate layers is far
+smaller than the layer width.  In the same spirit, we define the layer-$\ell$
+AGOP as $\AGOP_\ell =
+\E_x[\nabla_{a_\ell}\mathcal{L}\,(\nabla_{a_\ell}\mathcal{L})^\top]$, where
 $a_\ell(x)$ are the activations at layer $\ell$ and $\mathcal{L}$ is the
-cross-entropy loss.  This is computed via one backward pass per batch using
-automatic differentiation, with $a_\ell$ designated as a retain-gradient
-leaf.
+cross-entropy loss; we compute it from per-sample gradients obtained by one
+backward pass per batch (retaining gradients on the intermediate activation
+tensors).
 
 \subsection{Principal Angles Between Subspaces}
 \label{sec:angles}
@@ -183,9 +210,16 @@ cross-Gram matrix \citep{bjorck1973numerical}.  We summarise alignment with the
 \kcos = \frac{1}{k}\sum_{j=1}^{k}\cos^2\!\theta_j \in [0,1],
 \label{eq:alignment}
 \end{equation}
-where $k = \min(p,q)$.  For two uniformly random $k$-dimensional subspaces in
-$\R^d$, $\E[\kcos] = k/d$ \citep{huang2016classification}; we use
-$\text{ratio} = \kcos/(k/d)$ throughout.
+where $k = \min(p,q)$.  For two independent uniformly random $k$-dimensional
+subspaces in $\R^d$, $\E[\kcos] = k/d$: writing $\kcos =
+\frac1k\operatorname{tr}(U^\top V V^\top U)$ and using
+$\E[VV^\top] = \frac{k}{d}I_d$ for a Haar-random subspace gives
+$\E[\kcos] = \frac1k \cdot \frac{k}{d}\operatorname{tr}(U^\top U) = k/d$.
+We verified this empirically at the $(k,d)$ pairs used in our experiments.
+We report $\text{ratio} = \kcos/(k/d)$ throughout.  Principal angles are the
+natural metric here: for Gaussian-mixture classifiers, misclassification
+probability is governed by the principal angles between signal and model
+subspaces \citep{huang2016principal}.
 
 % ============================================================
 \section{Related Work}
@@ -194,14 +228,15 @@ $\text{ratio} = \kcos/(k/d)$ throughout.
 
 \paragraph{Intrinsic dimension of representations.}
 \citet{ansuini2019intrinsic} use TwoNN to map ID across layers of fourteen
-ImageNet-trained CNNs, finding the hunchback profile and a strong correlation
-($r=0.94$) between last-hidden-layer ID and test accuracy.  They show
-empirically that PCA underestimates the compression by one to two orders of
-magnitude, evidence that the manifolds are curved.
+ImageNet-trained CNNs, finding the hunchback profile and a strong Pearson
+correlation ($r=0.94$) between the training-set ID of the last hidden layer
+and test-set top-5 performance.  They show empirically that PCA-based linear
+dimension estimates are roughly an order of magnitude larger than TwoNN
+estimates, evidence that the manifolds are curved.
 \citet{ma2018dimensionality} connect local ID to robustness against adversarial
-examples.  \citet{yadav2026effective} report that effective dimension of
-last-layer representations predicts ImageNet accuracy across 52 models
-($r=0.75$, partial correlation).
+examples.  \citet{yadav2026geometry} report that the effective dimension of
+output representations predicts ImageNet accuracy across 52 pretrained models
+(partial correlation $r=0.75$).
 
 \paragraph{Neural Collapse.}
 \citet{papyan2020prevalence} discover that, in the terminal phase of training,
@@ -211,7 +246,7 @@ unconstrained features model that, at the global minimiser with balanced data
 and weight decay, the classifier satisfies $W = \alpha M^\top$ (NC3,
 \emph{self-duality}), so the row space of $W$ equals the span of the centred
 class means.  Both works restrict their analysis to the last-layer activations and
-classifier; \citet{zhou2023nc_intermediate} confirm that extending NC to
+classifier; \citet{parker2023intermediate} confirm that extending NC to
 intermediate layers is an active, open research direction.  Importantly, NC3 is
 a relationship between two linear objects (weight vectors and class-mean vectors)
 and does \emph{not} directly imply alignment between the data manifold tangent
@@ -220,14 +255,17 @@ variability or gradient structure at non-convergence.  Our experiments directly
 measure this gap across all layers.
 
 \paragraph{AGOP and the Neural Feature Ansatz.}
-\citet{beaglehole2024agop} show that AGOP projection is the operative mechanism
-behind deep neural collapse: in Deep Random Feature Models, NC1 improves
-monotonically with AGOP projection and worsens without it.
-\citet{beaglehole2024nfa} establish the Neural Feature Ansatz (NFA): the left
-singular vectors of $W^\ell$ align with the eigenvectors of the pre-activation
-tangent kernel, and this alignment is driven by eigenvector structure (not
-spectrum alone; randomising eigenvectors while preserving spectrum drops the
-NFA correlation from 0.93 to 0.53).
+The Neural Feature Ansatz (NFA) of \citet{radhakrishnan2024mechanism} posits
+that trained weight matrices align with the AGOP of their layer:
+$\rho(W_\ell^\top W_\ell, \AGOP_\ell)$ is empirically high across
+architectures.  \citet{beaglehole2024agop} show that AGOP projection is the
+operative mechanism behind deep neural collapse: in Deep Random Feature
+Models, within-class variability collapse improves monotonically with AGOP
+projection and worsens without it.  \citet{beaglehole2024nfa} analyse
+\emph{why} the NFA holds, reformulating it exactly as alignment between
+weight matrices and the pre-activation tangent kernel; the NFA remains an
+empirically supported ansatz rather than a proven property of general
+nonlinear networks.
 
 \paragraph{Geometry of overparameterisation.}
 The lottery ticket hypothesis \citep{frankle2019lottery} proposes that large
@@ -245,11 +283,16 @@ convergence.
 a class score with respect to a convolutional feature map identifies
 class-discriminative regions.  Our AGOP computation for convolutional layers
 applies the same spatial averaging to obtain a channel-wise gradient, then
-forms its outer product; we verify below that this is equivalent to the AGOP
-of the global-average-pooled representation.
+forms its outer product.  This quantity is exactly the sensitivity of the
+loss to spatially-uniform per-channel perturbations, and coincides (up to
+scale) with the gradient of the GAP representation whenever downstream
+operations depend on the layer only through its spatial average; the
+ResNet-18 \texttt{layer4}/\texttt{avgpool} pair in our experiments satisfies
+this condition and serves as a built-in exactness check
+(Section~\ref{sec:results}).
 
 \paragraph{Subspace alignment and classification.}
-\citet{huang2016classification} prove that, for Gaussian Mixture Model
+\citet{huang2016principal} prove that, for Gaussian Mixture Model
 classifiers, misclassification probability is governed by the principal angles
 between signal and model subspaces (product-of-sines regime for small
 mismatch, sum-of-squares-of-sines for large).  This provides theoretical
@@ -269,42 +312,53 @@ checkpoints $\{a_\ell\}_\ell$ at pooling layers and fully-connected layers.
 Convolutional outputs with spatial extent $H_\ell\times W_\ell$ are reduced to
 channel-wise representations via global average pooling (GAP):
 $h_\ell = \frac{1}{H_\ell W_\ell}\sum_{i,j}a_\ell(\cdot,i,j)\in\R^{C_\ell}$.
-Fully-connected layer outputs are used without modification.
+For the VGG-16 classifier head we probe the post-ReLU outputs of the two
+hidden FC layers (denoted \texttt{fc1}, \texttt{fc2}) and the pre-softmax
+logits (\texttt{out}); ResNet-18 layers are probed at stage outputs.
 This gives a consistent $(N, d_\ell)$ activation matrix per layer, with
 $d_\ell\in\{64,128,256,512,4096,1000\}$ depending on the layer.
 
 \subsection{Computing TwoNN ID}
 
-We apply Eq.~\eqref{eq:twonn} to each layer's $(N,d_\ell)$ activation matrix,
-using scikit-learn's \texttt{NearestNeighbors} for the two-NN query.  This is
-the same estimator used by \citet{ansuini2019intrinsic}; we denote the
-resulting estimate $\id_\ell$.
+We apply the Facco CDF-fit procedure (Eq.~\eqref{eq:twonn}, with the 10\%
+trimming) to each layer's $(N,d_\ell)$ activation matrix, using
+scikit-learn's \texttt{NearestNeighbors} for the two-NN query.  This is the
+same estimator family used by \citet{ansuini2019intrinsic}; we denote the
+resulting estimate $\id_\ell$.  Error bars are the standard deviation of the
+estimate over 20 random 80\% subsamples of the images.
 
 \subsection{Computing the AGOP}
 \label{sec:agop_comp}
 
 For each mini-batch $(x,y)$ we:
 \begin{enumerate}
-  \item Run a forward pass and register a retain-gradient hook on the raw
-    output tensor $a_\ell$ at layer $\ell$.
-  \item Compute $\mathcal{L} = \text{CrossEntropy}(f(x), y)$ and call
-    $\mathcal{L}$.backward().
-  \item Retrieve $g_\ell = \nabla_{a_\ell}\mathcal{L}$.  For convolutional
-    layers, apply spatial averaging: $\tilde{g}_\ell =
-    \frac{1}{H_\ell W_\ell}\sum_{i,j}g_\ell(\cdot,i,j)\in\R^{C_\ell}$.
-  \item Accumulate $\AGOP_\ell \mathrel{+}= \tilde{g}_\ell^\top
-    \tilde{g}_\ell / N$.
+  \item Run a forward pass, retaining gradients on the intermediate output
+    tensor $a_\ell$ at every probed layer.
+  \item Compute $\mathcal{L} = \sum_i \ell_i$ (cross-entropy with
+    \emph{sum} reduction, so each per-sample gradient carries unit weight
+    regardless of batch size) and backpropagate once.
+  \item Retrieve the per-sample gradients $g_{\ell,i} =
+    \nabla_{a_{\ell,i}}\ell_i$.  For convolutional layers, apply spatial
+    averaging: $\tilde{g}_{\ell,i} =
+    \frac{1}{H_\ell W_\ell}\sum_{u,v}g_{\ell,i}(\cdot,u,v)\in\R^{C_\ell}$.
 \end{enumerate}
-All layer hooks fire in a single forward-backward pass per batch, so the wall
-time is that of one training step.
+The per-sample gradients are stored as an $(N, d_\ell)$ matrix $G_\ell$, and
+$\AGOP_\ell = G_\ell^\top G_\ell / N$.  All eigendecompositions are performed
+via the thin SVD of $G_\ell$ (the AGOP eigenvectors are its right singular
+vectors), and retaining per-sample gradients is what enables the split-half
+and within-class controls below.  All layer hooks fire in a single
+forward-backward pass per batch, so the wall time is that of one training
+step.
 
 \begin{remark}
-The spatial average of $\nabla_{a_\ell}\mathcal{L}$ is precisely the gradient
-of $\mathcal{L}$ with respect to the GAP representation $h_\ell$, up to a
-scale factor of $H_\ell W_\ell$, in the special case where all downstream
-operations are GAP-invariant.  For general networks this is an approximation
-that coincides with the Grad-CAM weighting \citep{selvaraju2017gradcam} and
-captures channel-level sensitivity.
+The spatial average of $\nabla_{a_\ell}\ell$ is exactly the sensitivity of
+the loss to spatially-uniform per-channel perturbations of $a_\ell$, which is
+the natural dual of the GAP representation.  It equals the gradient of
+$\ell$ with respect to $h_\ell$ (up to the factor $H_\ell W_\ell$) whenever
+downstream computation depends on $a_\ell$ only through its spatial average;
+in general it coincides with the Grad-CAM weighting
+\citep{selvaraju2017gradcam} and captures channel-level sensitivity while
+discarding spatial structure.
 \end{remark}
 
 \subsection{Alignment Metric}
@@ -321,21 +375,72 @@ $\text{rank}_{\text{eff}}(\AGOP)$ is the number of AGOP eigenvalues exceeding
 \end{itemize}
 Alignment is then $\kcos = \frac{1}{k'}\sum_j \sigma_j(U^\top V)^2$
 (Eq.~\eqref{eq:alignment}).  The random baseline is $k'/d$, and we report
-$\text{ratio}=\kcos/(k'/d)$.
+$\text{ratio}=\kcos/(k'/d)$.  Because the ratio divides by $k'/d$, it is not
+comparable across layers of different width $d$; we therefore always report
+the raw $\kcos$ alongside it, and Section~\ref{sec:results} discusses where
+the two orderings disagree.  Error bars on $\kcos$ are standard deviations
+over 20 random 80\% subsamples (recomputing both subspaces per subsample),
+and we sweep $k$ over a grid to verify that conclusions are not artifacts of
+the specific $k$ chosen by the ID estimate.
+
+\subsection{Controls}
+\label{sec:controls}
+
+Three controls guard against the main confounds we identified.
+
+\paragraph{Random initialisation.}  Untrained networks with the same
+architecture (fixed seed) test whether alignment is training-induced or
+architectural.
+
+\paragraph{Split-half.}  Because activations and gradients of the same image
+are deterministically coupled (shared ReLU masks, shared prediction error),
+in-sample alignment could exceed chance without reflecting
+population structure.  We therefore recompute alignment with $U$ estimated
+from one stratified half of the images and $V$ from the other half
+(symmetrised, 10 random splits).
+
+\paragraph{Within-class.}  With $C$ balanced classes, both the top PCA
+directions and the loss gradients are expected to contain the $C-1$
+class-mean directions, so high alignment could reduce to shared class
+structure.  We recompute alignment after removing the per-class mean from
+both activations and per-sample gradients, with $k$ re-estimated from the ID
+of the class-centred activations.  We also report the fraction of each
+subspace lying in the span of the centred class means.  Because within-class
+gradient residuals are functionally coupled to within-class activation
+residuals of the \emph{same} samples (exactly so at the logits layer, where
+the softmax Jacobian is locally affine), the within-class score must itself
+be crossed with the split-half control; we report both the plain and the
+crossed (within-class $\times$ split-half) versions, and treat only the
+crossed version as evidence of population-level within-class alignment.
+
+Additionally, we recompute alignment with the \emph{centred} AGOP (gradient
+covariance) to check robustness to the mean-gradient direction, which is
+nonzero here since the networks are not at a minimum of the evaluation loss.
 
 \subsection{Experimental Setup}
 
 \paragraph{Models.} We use ImageNet-pretrained VGG-16 \citep{simonyan2015vgg}
 and ResNet-18 \citep{he2016resnet} from torchvision.  For controls we
 re-initialise both networks with random weights (same architecture,
-\texttt{torch.nn.init} defaults), yielding zero-accuracy networks on our
-evaluation set.
+\texttt{torch.nn.init} defaults, fixed seed), yielding chance-level networks
+on our evaluation set.
 
 \paragraph{Data.} We use the Imagenette validation set \citep{imagenette}---a
 publicly available 10-class subset of ImageNet---taking 500 balanced images
-(50 per class).  Images are resized to $224\times224$ and normalised with
-ImageNet statistics.  Gradients are computed using the correct ImageNet class
-indices for each Imagenette class.
+(50 per class) from the 160-pixel release, upsampled to $224\times224$ and
+normalised with ImageNet statistics.  Gradients are computed using the
+correct ImageNet class indices for each Imagenette class.  Two disclosures
+are in order.  First, the low-resolution source degrades 1000-way top-1
+accuracy to 66.2\% (VGG-16) and 65.2\% (ResNet-18) on our sample---well
+below what these models achieve on native-resolution images of these
+classes---so roughly a third of the gradient signal comes from
+misclassified images.  Second, Imagenette's validation split is drawn
+overwhelmingly ($\approx$97\%) from the original ImageNet \emph{training}
+split, so the pretrained models saw most of these images (at higher
+resolution) during training; the measured geometry is therefore closer to a
+training-manifold than a held-out-manifold measurement.  Neither issue
+affects the trained-vs-random comparison, which uses identical data for both
+conditions.
 
 \paragraph{Layers probed.}
 For VGG-16: \texttt{pool1}--\texttt{pool5} (convolutional stack) and
@@ -352,103 +457,192 @@ All experiments run on a CPU/MPS device in under one hour.
 \label{sec:results}
 % ============================================================
 
-Figure~\ref{fig:main} shows TwoNN ID, AGOP effective rank, and alignment
-ratio for trained and random-init VGG-16 (top row) and ResNet-18 (bottom row).
+Figure~\ref{fig:main} shows TwoNN ID, AGOP effective rank, and alignment for
+trained and random-init VGG-16 (top row) and ResNet-18 (bottom row);
+Figure~\ref{fig:controls} shows the controls; Table~\ref{tab:align} reports
+every probed layer of every model.  All error bars are standard deviations
+over 20 random 80\% subsamples of the images.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\linewidth]{../results/alignment_experiment.png}
+\includegraphics[width=\linewidth]{figures/alignment_experiment.pdf}
 \caption{
 \textbf{Layer-wise geometry of trained vs.\ random-init networks.}
-\emph{Left}: TwoNN intrinsic dimension. \emph{Centre}: AGOP effective rank
-(number of eigenvalues $>1\%$ of maximum). \emph{Right}: alignment
+\emph{Left}: TwoNN intrinsic dimension (error bars: subsample std).
+\emph{Centre}: AGOP effective rank at the 1\% eigenvalue threshold; shaded
+band spans the 5\%--0.1\% thresholds.  \emph{Right}: alignment
 (mean~$\cos^2\theta$) between top-$k$ PCA and top-$k$ AGOP subspaces;
-dotted line is the $k/d$ random baseline.  Solid lines: ImageNet-pretrained
-weights; dashed: random initialisation.
+dotted line is the $k/d$ random baseline.  Solid: ImageNet-pretrained
+weights; dashed: random initialisation (fixed seed).
 }
 \label{fig:main}
 \end{figure}
 
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/alignment_controls.pdf}
+\caption{
+\textbf{Alignment controls for the trained networks} (log scale, ratio over
+the $k/d$ baseline).  The full in-sample alignment (green) barely drops
+under split-half estimation (purple: PCA from one half of the images, AGOP
+from the disjoint other half), remains far above chance after removing
+class-mean structure from both objects (red), and after crossing the
+within-class control with split-half (brown).  The centred-AGOP variant
+(grey) is indistinguishable from the full measure.  ResNet's
+\texttt{layer4}/\texttt{avgpool} points coincide by construction
+(Section~\ref{sec:methods}), validating the spatial-mean gradient reduction
+where it is exact.
+}
+\label{fig:controls}
+\end{figure}
+
 \subsection{Replication: TwoNN Hunchback}
 
-The left panels replicate the core finding of \citet{ansuini2019intrinsic}.
-Trained VGG-16 rises from $\id=7.7$ at \texttt{pool1} to $28.6$ at
-\texttt{fc1}, then falls to $13.2$ at the output.  Trained ResNet-18 rises
-from $11.1$ at \texttt{layer1} to $23.0$ at \texttt{layer4/avgpool} and falls
-to $19.2$ at \texttt{fc}.  Random-init networks show a flatter, lower profile,
-consistent with \citet{ansuini2019intrinsic}'s randomised controls.
+The left panels of Figure~\ref{fig:main} replicate the qualitative finding
+of \citet{ansuini2019intrinsic}: ID rises through the network and falls
+toward the output.  Trained VGG-16 rises from $\id=7.9\pm0.2$ at
+\texttt{pool1} to $29.2\pm1.3$ at \texttt{fc1}, then falls to $13.2\pm0.5$
+at the logits.  Trained ResNet-18 rises from $11.3\pm0.6$ at \texttt{layer1}
+to $22.6\pm0.7$ at \texttt{layer4} and falls to $18.6\pm0.8$ at \texttt{fc}.
+Random-init networks show flatter, lower profiles through the convolutional
+stack; notably, their late-layer IDs (25--29 for VGG-16's FC head) are
+\emph{higher} than the trained network's (13--19), so training compresses
+precisely the layers whose ID \citet{ansuini2019intrinsic} link to
+generalisation.  We note two protocol differences from the original study:
+our representations are GAP-reduced channel vectors rather than full
+activation maps, and our profile peaks at \texttt{fc1} rather than
+mid-stack, so this is a qualitative rather than exact replication.
 
 \subsection{AGOP Rank}
 
-The centre panels show that AGOP effective rank also follows a hunchback, but
-is consistently larger than the TwoNN ID.  For VGG-16, rank peaks at 81 at
-\texttt{pool4} while ID peaks at 28.6 at \texttt{fc1}; for ResNet-18, rank
-peaks at 100 at \texttt{layer3} while ID peaks at 23.0 later.  This
-``rank overshooting'' indicates that the active subspace spans more directions
-than the data manifold---the network is sensitive to perturbations in
-directions that the training data does not explore.
+The centre panels show that AGOP effective rank also follows a hunchback and
+is consistently larger than the TwoNN ID (e.g.\ VGG-16 rank 81 at
+\texttt{pool4} vs.\ ID 19.3).  This ``rank overshooting'' indicates the
+active subspace spans more directions than the dominant data-variance
+subspace: the network is sensitive to perturbations in directions the data
+does not strongly explore.  The threshold band in Figure~\ref{fig:main}
+shows the rank ordering is stable across a $50\times$ range of eigenvalue
+cutoffs.
 
-A notable difference between architectures: random-init VGG-16 has high
-AGOP rank at convolutional layers (60--139) but collapses to $\approx10$ at
-FC layers.  Random-init ResNet-18 maintains low rank ($\approx10$--14) even at
-early layers.  We attribute this to ResNet's skip connections, which concentrate
-gradient flow through a narrow subspace even without training; VGG's
-unconstrained gradient paths spread across many channels.
+At random init, every layer at or after the last convolutional stage has
+rank ${\approx}10$--$20$ in both architectures.  This has a simple
+explanation: with near-uniform softmax outputs, the logit gradient
+$p - e_y$ is nearly constant within each class, so gradients concentrate in
+$\approx C$ class directions ($C=10$ here), and the ranks we observe at
+random-init late layers (10--21) sit exactly at this class-count floor.
+Random-init VGG's \emph{early} conv layers instead show high rank
+(58--133): many convolutional channels away from the head, the class-floor
+structure is dispersed by the unstructured backward pass.
 
 \subsection{Alignment}
 
 \begin{table}[t]
 \centering
-\caption{Manifold-gradient alignment: mean $\cos^2\theta$ and ratio above
-random baseline $k/d$.  Layers of interest highlighted.}
+\caption{Alignment at every probed layer (no row selection): mean
+$\cos^2\theta$ between top-$k$ PCA and AGOP subspaces, ratio over the $k/d$
+baseline, split-half ratio (subspaces from disjoint image halves), and
+within-class$\times$split-half ratio (class means removed from both
+objects, then split-half).  ResNet's \texttt{avgpool} probe is omitted: it
+is identical to GAP(\texttt{layer4}) by construction and matches it to
+$10^{-9}$.  ID is the Facco CDF-fit estimate $\pm$ subsample std.}
 \label{tab:align}
 \small
-\begin{tabular}{llrrrr}
-\toprule
-Network & Layer & $d$ & ID ($k$) & $\kcos$ & ratio \\
-\midrule
-VGG-16 (trained) & pool1  &   64 &  7.7 & 0.111 & 0.9$\times$ \\
-                  & pool5  &  512 & 20.1 & 0.285 & 7.3$\times$ \\
-                  & fc1    & 4096 & 28.6 & 0.246 & 34.8$\times$ \\
-                  & \textbf{fc2}    & \textbf{4096} & \textbf{19.2} & \textbf{0.207} & \textbf{44.6}$\times$ \\
-                  & out    & 1000 & 13.2 & 0.029 & 2.3$\times$ \\
-\midrule
-VGG-16 (random)  & fc2    & 4096 & 27.0 & 0.002 & 1.0$\times$ \\
-                  & out    & 1000 & 27.4 & 0.010 & 1.0$\times$ \\
-\midrule
-ResNet-18 (trained) & layer1   &  64 & 11.1 & 0.379 & 2.2$\times$ \\
-                    & \textbf{layer4/avgpool} & \textbf{512} & \textbf{23.0} & \textbf{0.345} & \textbf{7.7}$\times$ \\
-                    & fc       & 1000 & 19.2 & 0.039 & 2.1$\times$ \\
-\midrule
-ResNet-18 (random) & layer4/avgpool & 512 & 13.1 & 0.025 & 1.3$\times$ \\
-                   & fc             & 1000 & 13.1 & 0.014 & 1.4$\times$ \\
-\bottomrule
-\end{tabular}
+\input{table_alignment}
 \end{table}
 
 Table~\ref{tab:align} and the right panels of Figure~\ref{fig:main} give the
-main result.  Three findings stand out.
+main result.
 
-\paragraph{(F1) Training creates alignment.}
-Random-init networks sit at $\approx1\times$ the random baseline throughout.
-Trained networks exceed it by $2$--$45\times$ at hidden layers.  The
-structure is entirely training-induced; the architecture alone confers no
-systematic alignment.
+\paragraph{(F1) Training creates alignment on the full measure.}
+Random-init networks sit at $0.8$--$1.3\times$ the random baseline at every
+layer.  Trained networks exceed the baseline at every layer beyond
+\texttt{pool1}/\texttt{layer1}: by $3$--$7\times$ through VGG's
+convolutional stack, $35$--$43\times$ at its FC hidden layers, and
+$2$--$8\times$ through ResNet.  Trained \texttt{pool1} sits at baseline
+($0.9\times$): the first pooling stage shows no alignment.
 
-\paragraph{(F2) The last hidden layer is the alignment peak.}
-VGG-16 \texttt{fc2} achieves ratio $44.6\times$, ResNet-18
-\texttt{layer4}/\texttt{avgpool} achieves $7.7\times$.  These are the same
-layers that \citet{ansuini2019intrinsic} identify as the generalisation
-predictors via ID.  The alignment ratio and the ID together paint a coherent
-picture: the final hidden representation is both maximally compressed and
-maximally task-aligned.
+\paragraph{(F2) The alignment peak depends on the metric---but the last
+hidden layer peaks on both.}
+On the baseline-normalised ratio, the peak is VGG-16 \texttt{fc2}
+($43.4\times$); but the ratio divides by $k/d$ and therefore structurally
+favours wide layers.  On raw $\kcos$, the ordering changes: ResNet-18
+\texttt{layer1} (0.375) and \texttt{layer4} (0.342) exceed VGG \texttt{fc2}
+(0.201).  Two statements survive both metrics: within each architecture the
+last \emph{hidden} representation is a local alignment maximum
+(VGG \texttt{fc2}: $\kcos=0.201$ at $d=4096$; ResNet \texttt{layer4}:
+$\kcos=0.342$), and the logits layer is far below it.  These last hidden
+layers are the same layers whose ID predicts generalisation in
+\citet{ansuini2019intrinsic}.
 
-\paragraph{(F3) The output layer destroys alignment.}
-Across one linear transformation---from the last hidden layer to
-logits---the ratio drops from $44.6\times$ to $2.3\times$ (VGG-16) and from
-$7.7\times$ to $2.1\times$ (ResNet-18).  The logit geometry and the gradient
-geometry are nearly orthogonal.  Section~\ref{sec:discussion} explains this
-collapse via Neural Collapse.
+\paragraph{(F3) The logits layer destroys alignment.}
+Across one linear map---last hidden layer to logits---the ratio drops from
+$43.4\times$ to $2.3\times$ (VGG-16) and $7.6\times$ to $2.1\times$
+(ResNet-18), and raw $\kcos$ drops by $7$--$9\times$.  The AGOP subspace at
+the logits also nearly leaves the class-mean span (fraction of its energy in
+the span of centred class means: 0.03 at both architectures' logits, versus
+0.13--0.23 at the last hidden layers).  Section~\ref{sec:discussion}
+discusses this collapse.
+
+\subsection{What the Controls Show}
+\label{sec:results_controls}
+
+\paragraph{Split-half: the alignment is population structure.}
+Estimating PCA and AGOP from disjoint halves of the images
+(Figure~\ref{fig:controls}, Table~\ref{tab:align}) reduces the headline
+values only mildly: VGG \texttt{fc2} $43.4\!\to\!37.4\times$, \texttt{fc1}
+$34.8\!\to\!28.8\times$, ResNet \texttt{layer4} $7.6\!\to\!6.6\times$.
+Same-sample functional coupling between activations and gradients is not
+what the measure detects.
+
+\paragraph{Within-class: the alignment is not class-mean structure.}
+Removing per-class means from both activations and per-sample gradients, and
+additionally crossing with split-half, leaves VGG \texttt{fc1} at
+$21.1\times$ and \texttt{fc2} at $24.6\times$ baseline, and the VGG
+convolutional stack at $2.9$--$5.1\times$.  Consistently, the top-$k$ AGOP
+subspace never concentrates in the 9-dimensional class-mean span (at most
+32\% of its energy anywhere; 13--18\% at the headline layers).  The
+manifold-gradient alignment of trained networks lives mostly in
+\emph{within-class} geometry---the part of the representation that
+neural-collapse analyses treat as vanishing noise.
+
+\paragraph{A caveat the controls surfaced: architectural coupling near the
+logits.}
+At random init, the within-class control is far above baseline at layers
+within one linear map of the logits: VGG \texttt{fc2} $16.0\times$ and
+\texttt{out} $22.0\times$; ResNet \texttt{layer4} $26.6\times$ and
+\texttt{fc} $38.4\times$ (crossed with split-half; Table~\ref{tab:align}).
+The mechanism is linear-algebraic, not learned.  At near-uniform predictions
+the softmax Jacobian is ${\approx}\frac{1}{C}(I - \frac{1}{C}\mathbf{1}
+\mathbf{1}^\top)$, so within-class gradient residuals at the last hidden
+layer are $W^\top J W$ applied to within-class activation residuals---a
+\emph{fixed} linear map which, for wide random $W$, acts nearly
+isotropically on any low-dimensional subspace and therefore maps the
+activation PCA subspace approximately onto the gradient subspace.  ResNet's
+residual stream keeps the end-to-end Jacobian close to such a fixed map far
+into the network, which is why the coupling reaches \texttt{layer4} there
+but dies two nonlinearities from the output in VGG (\texttt{fc1} at random
+init: $1.0\times$).  Consequently, within-class alignment near the logits
+mixes learned structure with this architectural coupling and should not be
+attributed to training; the clean cells are layers at least two
+nonlinearities from the output, where random init sits at
+$0.7$--$1.0\times$ (VGG) and $1.5$--$1.7\times$ (ResNet) while trained
+networks reach $2.9$--$5.1\times$ (VGG conv), $21$--$25\times$ (VGG FC
+hidden), and $1.9$--$2.0\times$ (ResNet early stages---a marginal
+separation we do not lean on).
+
+\paragraph{Robustness.}
+The centred-AGOP variant (gradient covariance rather than second moment)
+matches the full measure everywhere (Figure~\ref{fig:controls}), so the
+mean-gradient direction---nonzero here, since the networks are not at a
+minimum of the evaluation loss---does not drive the result.  Sweeping $k$
+over $[2, 50]$, the VGG FC hidden layers stay $\ge 19\times$ above baseline
+for \emph{every} $k \in [5, 50]$ (peaking near $k \approx 8$--$10$ at
+$67$--$122\times$), so the conclusion is insensitive to the TwoNN
+finite-sample bias discussed in Section~\ref{sec:twonn}: any plausible
+correction to $k$ leaves the headline finding intact.  Finally, ResNet's
+\texttt{layer4} and \texttt{avgpool} probes---identical by construction
+under our gradient reduction---agree to $10^{-9}$, validating the
+spatial-mean pipeline where it is provably exact.
 
 % ============================================================
 \section{Discussion}
@@ -478,13 +672,24 @@ transformation thus constrains the active subspace to the $K$-dimensional
 class-direction subspace, which is far narrower and differently oriented than
 the broader data manifold directions captured at the penultimate layer.
 
-Our finding that the last \emph{hidden} layer achieves the highest alignment,
-while the \emph{output} logit layer drops sharply, is consistent with this
-picture.  The output layer computes $Wh$, mapping the hidden representation
-through $W$; the resulting logit-space AGOP is determined by the cross-entropy
-loss curvature, which depends on the current prediction distribution rather than
-the data manifold geometry, yielding generically low alignment with the data
-manifold.
+Our finding that the last \emph{hidden} layer achieves the highest alignment
+within each architecture, while the \emph{output} logit layer drops sharply,
+is consistent with this picture.  The output layer computes $Wh$, mapping
+the hidden representation through $W$; the resulting logit-space AGOP is
+determined by the cross-entropy loss curvature, which depends on the current
+prediction distribution rather than the data manifold geometry, yielding
+generically low alignment with the data manifold---and indeed at the logits
+the AGOP subspace nearly exits the class-mean span altogether (3\% energy).
+
+The within-class control adds a sharper point.  Neural-collapse analyses
+concern class means and treat within-class variability as noise that
+vanishes at convergence.  Our networks are far from that regime (66\%
+accuracy on the probe data), and most of the alignment we measure survives
+the removal of class-mean structure: it is a relationship between
+\emph{within-class} data variation and \emph{within-class} gradient
+variation.  Whatever produces manifold-gradient alignment in trained
+networks, it is not the NC class-mean geometry, and it is invisible to
+analyses that discard within-class structure.
 
 \subsection{Connection to Escape Dimensions}
 
@@ -496,54 +701,76 @@ points, making good minima more prevalent relative to bad ones.  A key
 prediction is that winning subnetworks cannot be treated in isolation from the
 wider network that supplied their escape-dimension context.
 
-Our AGOP effective rank provides a complementary empirical handle.  The AGOP
-is the second-order loss landscape averaged over data; its rank measures how
-many dimensions the loss landscape occupies.  We find that AGOP rank is
-moderate even at large layers ($d=4096$, rank $\approx50$--66 for VGG-16 FC
-layers), suggesting that the effective loss-landscape dimension is much smaller
-than the ambient parameter space---consistent with escape dimensions being a
-real but bounded phenomenon.  The fact that AGOP rank also decreases toward
-the output aligns with the intuition that, near convergence, the gradient
-occupies fewer and fewer directions as the loss flattens.
+Our measurements offer at most an indirect connection, which we state with
+care.  The escape-dimensions argument concerns the loss landscape in
+\emph{parameter} space, whereas our AGOP is a first-order object (the
+uncentred second moment of gradients) in \emph{activation} space.  The bridge
+is that layer-$\ell$ parameter gradients factor as
+$\partial\mathcal{L}/\partial W_\ell = g_\ell\, a_{\ell-1}^\top$, so the rank
+of the parameter-space gradient covariance at layer $\ell$ is bounded by the
+product of the activation-gradient rank and the activation-covariance rank.
+Our finding that activation-space AGOP rank is moderate even at wide layers
+($d=4096$) therefore implies that the parameter-space gradient also occupies
+far fewer directions than the ambient dimension---consistent with a picture
+in which overparameterisation supplies many more directions than the loss
+actively uses.  We emphasise that our networks were not trained on the
+evaluation task, so we cannot make claims about gradient concentration over
+the course of training; measuring the alignment trajectory during training is
+the natural follow-up.
 
 \subsection{What the Alignment Measures---and What It Doesn't}
 
-The alignment ratio tells us how much of the data manifold's intrinsic
-geometry is ``seen'' by the gradient, and vice versa.  A ratio of $45\times$
+The alignment ratio tells us how much of the dominant data-variance
+subspace is ``seen'' by the gradient, and vice versa.  A ratio of $43\times$
 means that knowing which directions the data varies in is highly informative
-about which directions the loss varies in---a much stronger relationship than
-random.  But a ratio of $45\times$ with $\kcos=0.21$ is still far from
-perfect alignment ($\kcos=1$).  This residual misalignment could reflect:
-(a) the approximation of the data manifold tangent space by global PCA;
-(b) the spatial-mean approximation for conv layer AGOP;
-(c) genuine misalignment between unused data directions and actively-used
-gradient directions.
+about which directions the loss varies in---far more than chance.  But a
+ratio of $43\times$ with $\kcos=0.20$ is still far from perfect alignment
+($\kcos=1$): roughly $80\%$ of the gradient-subspace energy lies outside the
+top-$k$ PCA subspace at the headline layer.  The controls rule out two
+candidate explanations for the aligned part (same-sample coupling;
+class-mean structure), but the \emph{residual misalignment} could still
+reflect: (a) the approximation of curved-manifold structure by a global
+linear PCA subspace---by our own Background argument, the top-$k$ PCA
+directions of a curved manifold with intrinsic dimension $k$ need not
+capture its tangent structure; (b) the spatial-mean reduction for
+convolutional layers; (c) genuine misalignment between data directions the
+task ignores and gradient directions the data does not explore.
 
-Disentangling these contributions requires finer tools---local tangent space
-estimation, exact AGOP computation for spatial layers, and larger-scale
-experiments across more architectures---which we leave to future work.
+Disentangling these requires finer tools---local tangent space estimation,
+spatially-resolved AGOP for conv layers, and more architectures---which we
+leave to future work.
 
 \subsection{Limitations}
 
 \begin{itemize}
-\item \textbf{Small scale.}  We study two architectures and $N=500$ images.
-  The alignment scores may shift with more data, especially for early layers
-  where $N$ is a binding constraint on TwoNN accuracy.
+\item \textbf{TwoNN finite-sample bias.}  On synthetic data of known
+  dimension at $N=500$, the estimator recovers $\hat d \approx 8.8$ at true
+  ID 10 and $\hat d \approx 15$ at true ID 20: it underestimates by
+  20--25\% in exactly the ID range of our late layers.  Since the alignment
+  ratio divides by $k/d$, an underestimated $k$ inflates the ratio.  The
+  $k$-sensitivity sweep (Section~\ref{sec:results}) quantifies how
+  conclusions depend on $k$; the raw $\kcos$ values do not share this
+  sensitivity.
 
-\item \textbf{Imagenette vs.\ ImageNet.}  Models are trained on ImageNet
-  (1000 classes) but evaluated on Imagenette (10 classes).  The AGOP is
-  computed on Imagenette images with their correct ImageNet class indices,
-  so the gradient is class-specific; but the data manifold reflects only 10
-  of the 1000 classes.
+\item \textbf{Small scale.}  We study two architectures, one dataset, and
+  $N=500$ images.  Subsample error bars quantify sampling variability but
+  not architecture or dataset variability.
 
-\item \textbf{GAP approximation.}  For convolutional layers, we apply global
-  average pooling to both activations and gradients.  This discards spatial
-  structure and may understate alignment for layers where spatial information
-  is functionally important.
+\item \textbf{Task mismatch.}  Models are trained on ImageNet (1000 classes)
+  but probed on Imagenette (10 classes) at reduced resolution, with the
+  provenance caveats disclosed in Section~\ref{sec:methods}.  The networks
+  are far from any minimum of the evaluation loss, so terminal-phase
+  phenomena (e.g.\ full neural collapse) should not be assumed to hold here.
 
-\item \textbf{Single time point.}  We measure alignment in a trained network.
-  Training dynamics of alignment---whether it builds monotonically or
-  non-monotonically, and whether faster alignment predicts faster
+\item \textbf{GAP approximation.}  For convolutional layers, both objects
+  are reduced to channel space, discarding spatial structure.  The
+  \texttt{layer4}/\texttt{avgpool} check validates the reduction where it is
+  exact, but for earlier layers the spatially-resolved alignment could
+  differ.
+
+\item \textbf{Single time point.}  We measure alignment in fixed
+  pretrained networks.  Training dynamics of alignment---whether it builds
+  monotonically, and whether faster alignment predicts faster
   generalisation---are unexplored.
 \end{itemize}
 
@@ -552,37 +779,52 @@ experiments across more architectures---which we leave to future work.
 \label{sec:conclusion}
 % ============================================================
 
-We have shown that trained CNN representations are not merely compressed (low
-intrinsic dimension) but \emph{task-aligned}: the directions that span the
-data manifold are the same directions along which the loss varies.  This
-alignment is strongest at the last hidden layer---the known generalisation
-predictor---reaches $35$--$45\times$ above chance for VGG-16 FC layers, and
-collapses to $\approx2\times$ at the output layer.  Random-init networks show
-no such alignment.
+We have shown that trained CNN representations are not merely compressed
+(low intrinsic dimension) but partially \emph{task-aligned}: the directions
+that dominate the data variance at a layer overlap the directions along
+which the loss varies far more than chance predicts---$35$--$43\times$ the
+random baseline at VGG-16's FC hidden layers, up to $7.6\times$ at
+ResNet-18's final block, collapsing to ${\approx}2\times$ at the logits,
+with random-init controls at $0.8$--$1.3\times$.  The alignment is
+population structure (it survives split-half estimation) and it is not
+class-mean geometry (it survives class-mean removal at $21$--$25\times$ for
+the VGG FC hidden layers): most of it lives in within-class variation.  The
+overlap is nonetheless partial---raw mean $\cos^2\theta$ peaks at
+0.20--0.38, far from 1.
 
 These findings suggest that the intrinsic dimension story of
-\citet{ansuini2019intrinsic} is incomplete: what matters is not just how
-much the representation is compressed, but whether it is compressed along the
-dimensions that drive the task.  The drop at the output layer, explicable via
-Neural Collapse geometry, shows that task alignment is a property of the
-penultimate representation rather than the final classification surface.
+\citet{ansuini2019intrinsic} is incomplete in an informative way: what
+matters is not only how much the representation is compressed, but whether
+its dominant directions are the ones the task uses---and that relationship
+is carried by within-class geometry that neural-collapse analyses discard.
+Methodologically, our controls surface a warning for this line of work:
+within one linear map of the logits, architectural coupling alone produces
+strong within-class ``alignment'' (up to $38\times$ at random init, reaching
+deep into ResNet via its residual stream), so gradient-representation
+alignment measured near the output must be checked against random-init
+controls before being attributed to learning.
 
-Future directions include: extending to more architectures and more images;
-tracking alignment during training; probing whether higher alignment at
-intermediate layers is causally linked to better generalisation (e.g.\ via
-targeted interventions that decorrelate the subspaces); and connecting the
-alignment trajectory to the escape-dimensions account of why overparameterised
-networks train so readily.
+Future directions include: extending to more architectures, higher-resolution
+data, and networks trained on the probe task itself; tracking alignment
+during training; probing whether alignment at intermediate layers is
+causally linked to generalisation (e.g.\ via interventions that decorrelate
+the subspaces); and testing whether the within-class alignment we observe is
+the trace of the AGOP-driven feature-learning mechanism of
+\citet{radhakrishnan2024mechanism,beaglehole2024agop} operating far from the
+collapse regime.
 
 % ============================================================
 \section*{Reproducibility Statement}
 
 All code, the trained model checkpoints (loaded from torchvision), and the
-Imagenette dataset are publicly available.  The complete experiment script and
-TwoNN implementation are at
+Imagenette dataset are publicly available.  The complete experiment script,
+TwoNN implementation, the \texttt{results.json} behind every number in this
+paper, and the script that regenerates Table~\ref{tab:align} from it are at
 \url{https://github.com/kilojoules/manifold-active-subspace}.
-The dataset downloads automatically on first run ($\approx100$~MB).
-Experiments complete in under one hour on a laptop CPU or Apple MPS device.
+All randomness is seeded (data subsets, random initialisations, subsample
+and split draws), so the pipeline is exactly reproducible.  The dataset
+downloads automatically on first run ($\approx100$~MB); the full experiment
+completes in about an hour on a laptop CPU or Apple MPS device.
 
 \section*{Author Contributions}
 
